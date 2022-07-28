@@ -3,9 +3,10 @@ import { ethers, upgrades } from "hardhat"
 
 async function main() {
 
-  let gnosisAddress = "0x2580f9954529853Ca5aC5543cE39E9B5B1145135";
-  let handler = "0x31a3439Ac7E6Ea7e0C0E4b846F45700c6354f8c1";
-  let supprotedTokens = ["0x1BFD67037B42Cf73acF2047067bd4F2C47D9BfD6", "0xDBf31dF14B66535aF65AaC99C32e9eA844e14501"];
+  let gnosisAddress = "0x4B948C0354c82f1DC3c510bfa93578540DAb917d";
+  let handler = "0xF877605269bB018c96bD1c93F276F834F45Ccc3f";
+  let supprotedTokens = ["0x61791647b8dc56bd481F1CE2c3ce5EE9d5588E9e"];
+  let exchange = "";
 
   const IbAlluo = await ethers.getContractFactory("IbAlluo");
 
@@ -18,8 +19,10 @@ async function main() {
         supprotedTokens,
         BigNumber.from("100000000154712500"),
         500,
-        "0x86C80a8aa58e0A4fa09A69624c31Ab2a6CAD56b8"],
-    { initializer: 'initialize', kind: 'uups' }
+        "0x9399BB24DBB5C4b782C70c2969F58716Ebbd6a3b",
+        exchange
+    ],
+        { initializer: 'initialize', kind: 'uups' }
 );
 
   console.log("ibAlluo deployed to:", ibAlluo.address);

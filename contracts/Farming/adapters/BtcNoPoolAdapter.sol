@@ -24,16 +24,16 @@ contract BtcNoPoolAdapter is AccessControl {
     function deposit(address _token, uint256 _fullAmount, uint256 _leaveInPool) external onlyRole(DEFAULT_ADMIN_ROLE) {
         uint256 toSend = _fullAmount - _leaveInPool;
         if(toSend != 0){
-            IERC20(WBTC).safeTransfer(wallet, toSend);
+            IERC20(WBTC).safeTransfer(wallet, toSend / 10**10);
         }
     } 
 
     function withdraw(address _user, address _token, uint256 _amount ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        IERC20(WBTC).safeTransfer(_user, _amount);
+        IERC20(WBTC).safeTransfer(_user, _amount / 10**10);
     }
     
     function getAdapterAmount() external view returns (uint256) {
-        return IERC20(WBTC).balanceOf(address(this));
+        return IERC20(WBTC).balanceOf(address(this)) * 10**10;
     }
 
     function getCoreTokens() external pure returns ( address mathToken, address primaryToken ){

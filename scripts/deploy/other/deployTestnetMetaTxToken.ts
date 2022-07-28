@@ -6,16 +6,16 @@ async function main() {
     const signers = await ethers.getSigners();
     const Token = await ethers.getContractFactory("UChildAdministrableERC20");
 
-    const tokenName = "Testnet jEUR";
-    const tokenSymbol = "tjEUR";
-    const tokenDecimals = 18;
+    const tokenName = "Testnet WBTC";
+    const tokenSymbol = "tWBTC";
+    const tokenDecimals = 8;
 
     console.log("Deploying", tokenName);
     let token = await upgrades.deployProxy(Token,
         [
             tokenName,
             tokenSymbol,
-            18,
+            tokenDecimals,
             signers[0].address
         ],
         { initializer: 'initialize', kind: 'uups' }
