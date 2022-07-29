@@ -4,7 +4,7 @@ import { expect } from "chai";
 import { BigNumber, BigNumberish, BytesLike } from "ethers";
 import { ethers, network, upgrades } from "hardhat";
 import { before } from "mocha";
-import { IERC20, PseudoMultisigWallet, PseudoMultisigWallet__factory, IbAlluo, IbAlluo__factory, LiquidityHandler, UsdCurveAdapter, BtcCurveAdapter, LiquidityHandler__factory, UsdCurveAdapter__factory, EurCurveAdapter, EthNoPoolAdapter, EurCurveAdapter__factory, EthNoPoolAdapter__factory, BtcCurveAdapter__factory } from "../typechain";
+import { IERC20, PseudoMultisigWallet, PseudoMultisigWallet__factory, IbAlluo, IbAlluo__factory, LiquidityHandler, UsdCurveAdapter, BtcCurveAdapter, LiquidityHandler__factory, UsdCurveAdapter__factory, EurCurveAdapter, EthNoPoolAdapter, EurCurveAdapter__factory, EthNoPoolAdapter__factory, BtcCurveAdapter__factory, StIbAlluo, StIbAlluo__factory } from "../typechain";
 
 async function getLastWithdrawalInfo(token: IbAlluo, handler: LiquidityHandler) {
     let request = (await handler.ibAlluoToWithdrawalSystems(token.address)).lastWithdrawalRequest
@@ -42,6 +42,11 @@ describe("Handler and different adapters", function () {
     let ibAlluoEur: IbAlluo;
     let ibAlluoEth: IbAlluo;
     let ibAlluoBtc: IbAlluo;
+
+    let StIbAlluoUsd: StIbAlluo;
+    let StIbAlluoEur: StIbAlluo;
+    let StIbAlluoEth: StIbAlluo;
+    let StIbAlluoBtc: StIbAlluo;
 
     let usdAdapter: UsdCurveAdapter;
     let eurAdapter: EurCurveAdapter;
@@ -293,6 +298,51 @@ describe("Handler and different adapters", function () {
         await handler.connect(admin).grantRole(await handler.DEFAULT_ADMIN_ROLE(), ibAlluoBtc.address)
         await handler.connect(admin).setIbAlluoToAdapterId(ibAlluoBtc.address, 4)
 
+        
+        let StIbAlluoEur: StIbAlluo;
+        let StIbAlluoEth: StIbAlluo;
+        let StIbAlluoBtc: StIbAlluo;
+        const StIbAlluoFactory = await ethers.getContractFactory("StIbAlluo") as StIbAlluo__factory;
+
+        StIbAlluoUsd = await upgrades.deployProxy(StIbAlluoFactory,
+            [ibAlluoUsd.address, 18, "Streaming IbAlluo USD", "StIbAlluoUSD", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7", admin.address,[ibAlluoUsd.address]
+            ], {
+                initializer: 'alluoInitialize',
+                kind: 'uups'
+            }
+        ) as StIbAlluo;
+
+        StIbAlluoEth = await upgrades.deployProxy(StIbAlluoFactory,
+            [ibAlluoEth.address, 18, "Streaming IbAlluo ETH", "StIbAlluoEth", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7",admin.address, [ibAlluoEth.address]
+            ], {
+                initializer: 'alluoInitialize',
+                kind: 'uups'
+            }
+        ) as StIbAlluo;
+
+
+        StIbAlluoEur = await upgrades.deployProxy(StIbAlluoFactory,
+            [ibAlluoEur.address, 18, "Streaming IbAlluo Eur", "StIbAlluoEUR", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7", admin.address,[ibAlluoEur.address]
+            ], {
+                initializer: 'alluoInitialize',
+                kind: 'uups'
+            }
+        ) as StIbAlluo;
+
+
+        StIbAlluoBtc = await upgrades.deployProxy(StIbAlluoFactory,
+            [ibAlluoBtc.address, 18, "Streaming IbAlluo Btc", "StIbAlluoBTC", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7", admin.address,[ibAlluoBtc.address]
+            ], {
+                initializer: 'alluoInitialize',
+                kind: 'uups'
+            }
+        ) as StIbAlluo;
+
+
+        await ibAlluoBtc.connect(admin).setSuperToken(StIbAlluoBtc.address);
+        await ibAlluoUsd.connect(admin).setSuperToken(StIbAlluoUsd.address);
+        await ibAlluoEur.connect(admin).setSuperToken(StIbAlluoEur.address);
+        await ibAlluoEth.connect(admin).setSuperToken(StIbAlluoEth.address);
     });
 
 
@@ -370,7 +420,7 @@ describe("Handler and different adapters", function () {
             let walletBalance = await wbtc.balanceOf(admin.address);
             await deposit(signers[1], wbtc, parseUnits("1", 8));
             expect(Number(await wbtc.balanceOf(admin.address))).greaterThan(Number(walletBalance))
-            await expect(ibAlluoBtc.connect(signers[1]).withdraw(wbtc.address, parseUnits("2", 18))).to.be.revertedWith('ERC20: burn amount exceeds balance')
+            await expect(ibAlluoBtc.connect(signers[1]).withdraw(wbtc.address, parseUnits("2", 18))).to.be.revertedWith('SuperfluidToken: burn amount exceeds balance')
         })
         describe('BTC Mass deposits and withdrawal test cases', function () {
             it("Multiple deposits and withdrawals: Eventually, all withdrawers should be paid", async function () {
@@ -469,7 +519,7 @@ describe("Handler and different adapters", function () {
             expect(Number(await weth.balanceOf(admin.address))).greaterThan(Number(walletBalance))
             walletBalance = await weth.balanceOf(admin.address);
 
-            await expect(ibAlluoEth.connect(signers[1]).withdraw(weth.address, parseUnits("500", 18))).to.be.revertedWith('ERC20: burn amount exceeds balance')
+            await expect(ibAlluoEth.connect(signers[1]).withdraw(weth.address, parseUnits("500", 18))).to.be.revertedWith('SuperfluidToken: burn amount exceeds balance')
         })
 
 
@@ -647,7 +697,7 @@ describe("Handler and different adapters", function () {
             let walletBalance = await eurt.balanceOf(admin.address);
             await deposit(signers[1], eurt, parseUnits("100", 6));
             expect(Number(await eurt.balanceOf(admin.address))).greaterThan(Number(walletBalance))
-            await expect(ibAlluoEur.connect(signers[1]).withdraw(eurt.address, parseUnits("500", 18))).to.be.revertedWith('ERC20: burn amount exceeds balance')
+            await expect(ibAlluoEur.connect(signers[1]).withdraw(eurt.address, parseUnits("500", 18))).to.be.revertedWith('SuperfluidToken: burn amount exceeds balance')
         })
         describe('EUR Mass deposits and withdrawal test cases', function () {
             it("Multiple deposits and withdrawals: Eventually, all withdrawers should be paid", async function () {
@@ -724,7 +774,7 @@ describe("Handler and different adapters", function () {
                 let walletBalance = await eurt.balanceOf(admin.address);
                 await deposit(signers[1], eurt, parseUnits("100", 6));
                 expect(Number(await eurt.balanceOf(admin.address))).greaterThan(Number(walletBalance))
-                await expect(ibAlluoEur.connect(signers[1]).withdraw(eurt.address, parseUnits("500", 18))).to.be.revertedWith('ERC20: burn amount exceeds balance')
+                await expect(ibAlluoEur.connect(signers[1]).withdraw(eurt.address, parseUnits("500", 18))).to.be.revertedWith('SuperfluidToken: burn amount exceeds balance')
             })
             describe('EUR Mass deposits and withdrawal test cases', function () {
                 it("Multiple deposits and withdrawals: Eventually, all withdrawers should be paid", async function () {

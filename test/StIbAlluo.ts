@@ -4,7 +4,7 @@ import { expect } from "chai";
 import { Address } from "cluster";
 import { BigNumber, BigNumberish, BytesLike } from "ethers";
 import { ethers, network, upgrades } from "hardhat";
-import { IERC20, PseudoMultisigWallet, PseudoMultisigWallet__factory, IbAlluo, IbAlluo__factory, LiquidityHandler, UsdCurveAdapter, LiquidityHandler__factory, UsdCurveAdapter__factory, EurCurveAdapter, EthNoPoolAdapter, EurCurveAdapter__factory, EthNoPoolAdapter__factory, BtcCurveAdapter } from "../typechain";
+import { IERC20, PseudoMultisigWallet, PseudoMultisigWallet__factory, IbAlluo, IbAlluo__factory, LiquidityHandler, UsdCurveAdapter, LiquidityHandler__factory, UsdCurveAdapter__factory, EurCurveAdapter, EthNoPoolAdapter, EurCurveAdapter__factory, EthNoPoolAdapter__factory, BtcCurveAdapter, ISuperTokenFactory, StIbAlluo, StIbAlluo__factory } from "../typechain";
 
 async function skipDays(d: number) {
     ethers.provider.send('evm_increaseTime', [d * 86400]);
@@ -58,6 +58,7 @@ describe("IbAlluoUSD and Handler", function () {
     let admin: SignerWithAddress;
 
     let ibAlluoCurrent: IbAlluo;
+    let StIbAlluo: StIbAlluo;
 
     let usdAdapter: UsdCurveAdapter;
 
@@ -66,11 +67,13 @@ describe("IbAlluoUSD and Handler", function () {
 
     let dai: IERC20, usdc: IERC20, usdt: IERC20;
     let curveLpUSD: IERC20;
+    let superToken: IERC20;
 
     let usdWhale: SignerWithAddress;
     let curveUsdLpHolder: SignerWithAddress;
 
     let exchangeAddress: string;
+    let superFactory: ISuperTokenFactory;
 
     before(async function () {
 
@@ -161,10 +164,167 @@ describe("IbAlluoUSD and Handler", function () {
 
         await handler.connect(admin).setIbAlluoToAdapterId(ibAlluoCurrent.address, lastAdapterId)
         await handler.connect(admin).grantRole(await handler.DEFAULT_ADMIN_ROLE(), ibAlluoCurrent.address)
+
+
+        const StIbAlluoFactory = await ethers.getContractFactory("StIbAlluo") as StIbAlluo__factory;
+
+        StIbAlluo = await upgrades.deployProxy(StIbAlluoFactory,
+            [ibAlluoCurrent.address, 18, "Streaming IbAlluo USD", "StIbAlluoUSD", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7", multisig.address, [ibAlluoCurrent.address]
+            ], {
+                initializer: 'alluoInitialize',
+                kind: 'uups'
+            }
+        ) as StIbAlluo;
+
+        let ABI = ["function setSuperToken(address _superToken)"];
+        let iface = new ethers.utils.Interface(ABI);
+        let calldata = iface.encodeFunctionData("setSuperToken", [StIbAlluo.address]);
+
+        await multisig.executeCall(ibAlluoCurrent.address, calldata);
     });
 
-    describe('Handler integration with IbAlluo', function () {
+    describe('All IbAlluo tests with StIbAlluo integration', function () {
+        it("Test upgradeability of original ibAlluo contract", async function() {
 
+            let ibAlluoCurrentUsd = await ethers.getContractAt("IbAlluo", "0xC2DbaAEA2EfA47EBda3E572aa0e55B742E408BF6");
+            await ibAlluoCurrentUsd.connect(admin).grantRole("0x189ab7a9244df0848122154315af71fe140f3db0fe014031783b0946b8c9d2e3", "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266")
+            await ibAlluoCurrentUsd.connect(admin).changeUpgradeStatus(true);
+
+            const IbAlluoNew = await ethers.getContractFactory("IbAlluo");
+            let IbAlluoUsd = await upgrades.forceImport("0xC2DbaAEA2EfA47EBda3E572aa0e55B742E408BF6", IbAlluoNew);
+            await upgrades.upgradeProxy(IbAlluoUsd.address, IbAlluoNew);
+            console.log("Upgrade complete")
+        })
+        it("Create flow through contract", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+            let balanceBefore = await ibAlluoCurrent.getBalance(signers[2].address);
+            let encodeData = await ibAlluoCurrent.connect(signers[1]).formatPermissions();
+            let superhost = await ethers.getContractAt("Superfluid", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7");
+            await superhost.connect(signers[1]).callAgreement(
+                "0x6EeE6060f715257b970700bc2656De21dEdF074C",
+                encodeData,
+                "0x"
+            )
+            await ibAlluoCurrent.connect(signers[1]).createFlow(signers[2].address, "1", parseEther("10000"))
+
+            await skipDays(1)
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThanOrEqual(Number(balanceBefore));
+            console.log(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+        })
+
+        it("Create flow through contract then delete flow", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+            let balanceBefore = await ibAlluoCurrent.getBalance(signers[2].address);
+            let encodeData = await ibAlluoCurrent.connect(signers[1]).formatPermissions();
+            let superhost = await ethers.getContractAt("Superfluid", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7");
+            await superhost.connect(signers[1]).callAgreement(
+                "0x6EeE6060f715257b970700bc2656De21dEdF074C",
+                encodeData,
+                "0x"
+            )
+            await ibAlluoCurrent.connect(signers[1]).createFlow(signers[2].address, "1", parseEther("10000"))
+
+            await skipDays(1)
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThanOrEqual(Number(balanceBefore));
+            let balanceAfter = await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address);
+
+            await ibAlluoCurrent.connect(signers[1]).deleteFlow(signers[2].address);
+            await skipDays(1)
+            // There is slight inaccuracy because of the time it takes to execute.
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThan(Number(balanceAfter));
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).lessThan(Number(balanceAfter) * 1.01);
+
+        })
+        it("Create flow through contract then update flow to give 10x the money", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+            let balanceBefore = await ibAlluoCurrent.getBalance(signers[2].address);
+            let encodeData = await ibAlluoCurrent.connect(signers[1]).formatPermissions();
+            let superhost = await ethers.getContractAt("Superfluid", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7");
+            await superhost.connect(signers[1]).callAgreement(
+                "0x6EeE6060f715257b970700bc2656De21dEdF074C",
+                encodeData,
+                "0x"
+            )
+            await ibAlluoCurrent.connect(signers[1]).createFlow(signers[2].address, "1", parseEther("10000"))
+
+            await skipDays(1)
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThanOrEqual(Number(balanceBefore));
+            console.log("Before update flow", await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+
+            // 10x the value of the flow.
+            await ibAlluoCurrent.connect(signers[1]).updateFlow(signers[2].address, "10", "0")
+
+            let balanceAfterDay1 = Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+
+            await skipDays(1)
+            console.log("After update flow", await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThan(balanceAfterDay1);
+        })
+
+
+
+        it("Call agreement CFA directly to host", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+            let balanceBefore = await ibAlluoCurrent.getBalance(signers[2].address);
+
+            await ibAlluoCurrent.connect(signers[1]).approve(StIbAlluo.address, parseEther("10000"));
+            await StIbAlluo.connect(signers[1]).upgrade(parseEther("10000"))
+
+
+            let superhost = await ethers.getContractAt("Superfluid", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7");
+            let CFA = await ethers.getContractAt("IConstantFlowAgreementV1", "0x6EeE6060f715257b970700bc2656De21dEdF074C");
+
+            let encodeData = await ibAlluoCurrent.callStatic.formatFlow(signers[2].address, "1", "0x6EeE6060f715257b970700bc2656De21dEdF074C")
+
+            await superhost.connect(signers[1]).callAgreement(
+                "0x6EeE6060f715257b970700bc2656De21dEdF074C",
+                encodeData,
+                "0x"
+            )
+
+
+            await skipDays(1)
+            expect(Number(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address))).greaterThanOrEqual(Number(balanceBefore));
+            console.log(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+        })
+        it("Call agreement directly with CFA, and then withdraws from ibAlluo should pull StIbAlluo", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+            let balanceBefore = await ibAlluoCurrent.getBalance(signers[2].address);
+
+            await ibAlluoCurrent.connect(signers[1]).approve(StIbAlluo.address, parseEther("10000"));
+            await StIbAlluo.connect(signers[1]).upgrade(parseEther("10000"))
+
+            let superhost = await ethers.getContractAt("Superfluid", "0x3E14dC1b13c488a8d5D310918780c983bD5982E7");
+            let CFA = await ethers.getContractAt("IConstantFlowAgreementV1", "0x6EeE6060f715257b970700bc2656De21dEdF074C");
+
+            let encodeData = await ibAlluoCurrent.callStatic.formatFlow(signers[2].address, "10000000000000", "0x6EeE6060f715257b970700bc2656De21dEdF074C")
+            await superhost.connect(signers[1]).callAgreement(
+                "0x6EeE6060f715257b970700bc2656De21dEdF074C",
+                encodeData,
+                "0x"
+            )
+
+
+            await skipDays(100)
+            console.log(await ibAlluoCurrent.connect(signers[2]).getBalance(signers[2].address));
+
+            await ibAlluoCurrent.connect(signers[2]).withdraw(dai.address, parseEther("10"));
+            expect(Number(await dai.connect(signers[2]).balanceOf(signers[2].address))).greaterThanOrEqual(0);
+            console.log(await dai.connect(signers[2]).balanceOf(signers[2].address));
+        })
+        it("Should convert StIbAlluo to IbAlluo when needed automatically", async function() {
+            await deposit(signers[1], dai, parseUnits("10000", 18));
+
+            await ibAlluoCurrent.connect(signers[1]).approve(StIbAlluo.address, parseEther("5000"));
+            await StIbAlluo.connect(signers[1]).upgrade(parseEther("5000"))
+
+            // Just some dust.
+            // expect(await ibAlluoCurrent.connect(signers[1]).getBalance(signers[1].address)).equal((parseUnits("10000", 18)))
+            await ibAlluoCurrent.connect(signers[1]).withdraw(dai.address, parseEther("10000"));
+            expect(Number(await dai.balanceOf(signers[1].address))).greaterThanOrEqual(0);
+            console.log(await dai.balanceOf(signers[1].address));
+        })
         it("Simulation with random deposits and withdrawals", async function () {
             let numberOfDeposits = getRandomArbitrary(4, 5);
             let i = 0;
@@ -476,11 +636,12 @@ describe("IbAlluoUSD and Handler", function () {
             describe("Should fail when", function () {
 
                 it('transfer to zero address', async function () {
-                    await expect(ibAlluoCurrent.transfer(ethers.constants.AddressZero, parseEther('100'))).to.be.revertedWith("ERC20: transfer to the zero address");
+                    await deposit(signers[1], dai, parseEther('50'))
+                    await expect(ibAlluoCurrent.transfer(ethers.constants.AddressZero, parseEther('50'))).to.be.revertedWith("SuperfluidToken: burn amount exceeds balance");
                 });
 
                 it('sender doesn\'t have enough tokens', async function () {
-                    await expect(ibAlluoCurrent.connect(signers[1]).transfer(signers[2].address, parseEther('100'))).to.be.revertedWith("ERC20: transfer amount exceeds balance");
+                    await expect(ibAlluoCurrent.connect(signers[1]).transfer(signers[2].address, parseEther('100'))).to.be.revertedWith("SuperfluidToken: burn amount exceeds balance");
                 });
 
                 it('transfer amount exceeds allowance', async function () {
@@ -536,7 +697,7 @@ describe("IbAlluoUSD and Handler", function () {
         describe('Mint / Burn', function () {
             it("burn fails because the amount exceeds the balance", async function () {
                 await deposit(signers[1], dai, parseEther('100'));
-                await expect(ibAlluoCurrent.connect(signers[1]).withdraw(dai.address, parseEther('200'))).to.be.revertedWith("ERC20: burn amount exceeds balance");
+                await expect(ibAlluoCurrent.connect(signers[1]).withdraw(dai.address, parseEther('200'))).to.be.revertedWith("SuperfluidToken: burn amount exceeds balance");
             });
         });
     });
